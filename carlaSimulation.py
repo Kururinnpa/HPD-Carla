@@ -23,7 +23,7 @@ class CarlaSimulation(object):
             self.client = carla.Client(host, port)
         except Exception as error:
             raise error
-        self.client.set_timeout(2.0)
+        self.client.set_timeout(20.0)
 
         self.world = self.client.get_world()
         self.blueprint_library = self.world.get_blueprint_library()
