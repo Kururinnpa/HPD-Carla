@@ -27,11 +27,12 @@ class ConfigureModule(object):
             tempkeys = temp.keys()
             server_id = 0
             if 'sumo'in tempkeys :
-                self._sumo = (temp['sumo']['host'],temp['sumo']['port'])
-                host, port = self._sumo
-                self._servers_IP[server_id] = (host, port)
-                self._servers_id.add(server_id) 
-                server_id += 1
+                temp_sumo = temp['sumo']
+                self._sumo = (temp_sumo['host'],temp_sumo['port'])
+                # host, port = self._sumo
+                # self._servers_IP[server_id] = (host, port)
+                # self._servers_id.add(server_id) 
+                # server_id += 1
             else:
                 self._sumo = None
             # 添加服务器
