@@ -60,6 +60,7 @@ class SimulationSynchronization(object):
         self.sumo_id = None
 
         # multithread related
+        self.version = 0
         self.lock = threading.Lock()
         self.thread_list = []
 
@@ -73,7 +74,6 @@ class SimulationSynchronization(object):
 
         # ☆★get blueprint_library and map in every world
         self.sim_map = None
-        # logging.info('start to update blueprint_library updated and verify map.')
         for cl in self.carla_list:
             # blueprint part
             """
@@ -84,7 +84,6 @@ class SimulationSynchronization(object):
             # map part: ensure map identical
             sim_hash = None
             try:
-                # logging.debug('start to get map of server {}.'.format(cl.id))
                 clh = cl.map_hash
                 if not sim_hash:
                     sim_hash = clh
@@ -101,11 +100,9 @@ class SimulationSynchronization(object):
                 logging.error(' Server {} has a different map.'.format(cl.id))
                 logging.error(' The map on each server should be identical:')
                 logging.error(' Copy a map to all servers and ensure worlds have changed into the same map.')
-        # logging.info('Done! blueprint_library updated and map is verified.')
 
         # ☆★ start simulation, set carla simulation in sync mode.
         settings = None
-        # logging.info('start to set synchronous mode.')
         for cl in self.carla_list:
             if not settings:
                 settings = cl.world.get_settings()
@@ -115,7 +112,6 @@ class SimulationSynchronization(object):
             cl.world.apply_settings(settings)
             traffic_manager = cl.client.get_trafficmanager()
             traffic_manager.set_synchronous_mode(True)
-        # logging.info('Done! Synchronous mode has been set.')
 
     def _get_recommend_blueprint(self, carla_id, actor_ontology):
         """
@@ -133,13 +129,6 @@ class SimulationSynchronization(object):
                 break
         return blueprint
 
-    # def _get_actor_store(self):
-    #     actor_store_copy = None
-    #     if self.lock.acquire():
-    #         actor_store_copy = copy.deepcopy(self.actor_store)
-    #         self.lock.release()
-    #     return actor_store_copy
-
     @staticmethod
     def get_all_avatars(avatars_dict):
         result = set()
@@ -155,10 +144,10 @@ class SimulationSynchronization(object):
         """
         carlalet.update_info()
         # update store from carlalet
-        # logging.info('start to update actors of server {}.'.format(carlalet.id))
-        if True:
+        while True: # the loop to update ontologies
+            if_break = True # whether to break the while loop
             # in_world放的actor，ofWorld放的id,
-            # actor 只用关注 载具，行人，交通灯
+            # actor 只用关注 载具，行人
             actors_in_world = carlalet.get_actors()  # .NET
             vehicles_in_world = actors_in_world.filter('vehicle.*')
             walkers_in_world = actors_in_world.filter('walker.*')
@@ -169,39 +158,87 @@ class SimulationSynchronization(object):
                 [walker.id for walker in walkers_in_world])
             # 数据准备 inworld - avatar => ontology
             carlalet.ontology = actors_ofWorld - self.get_all_avatars(carlalet.avatars)
-            ontology_store_dict = self.actor_store[carlalet.id]  # ^^^ # {actor_id : actor}
-            ontology_ofStore = set(ontology_store_dict.keys())
-            actor_add2Store = carlalet.ontology - ontology_ofStore
-            actor_del2Store = ontology_ofStore - carlalet.ontology
-            actor_upd2Store = carlalet.ontology & ontology_ofStore
-            logging.info('#{}:当前世界的actor SET:{}.'.format(carlalet.id, actors_ofWorld))
-            logging.info('#{}:当前世界的ontology SET:{}.'.format(carlalet.id, carlalet.ontology))
-            logging.info('#{}:原记录中的ontology SET:{}.'.format(carlalet.id, ontology_ofStore))
-            logging.info('#{}:需要增加的ontology记录 SET:{}.'.format(carlalet.id, actor_add2Store))
-            logging.info('#{}:需要删除的ontology记录 SET:{}.'.format(carlalet.id, actor_del2Store))
-            logging.info('#{}:需要更新的ontology记录 SET:{}.'.format(carlalet.id, actor_upd2Store))
+
+            #atomic operation to read shared variable
+            if self.lock.acquire():
+                current_version = self.version
+                ontology_store_dict = self.actor_store[carlalet.id]  # ^^^ # {actor_id : actor}
+                ontology_ofStore = set(ontology_store_dict.keys())
+                actor_add2Store = carlalet.ontology - ontology_ofStore
+                actor_del2Store = ontology_ofStore - carlalet.ontology
+                actor_upd2Store = carlalet.ontology & ontology_ofStore
+                self.lock.release()
+
+            # logging.info('#{}:当前世界的actor SET:{}.'.format(carlalet.id, actors_ofWorld))
+            # logging.info('#{}:当前世界的ontology SET:{}.'.format(carlalet.id, carlalet.ontology))
+            # logging.info('#{}:原记录中的ontology SET:{}.'.format(carlalet.id, ontology_ofStore))
+            # logging.info('#{}:需要增加的ontology记录 SET:{}.'.format(carlalet.id, actor_add2Store))
+            # logging.info('#{}:需要删除的ontology记录 SET:{}.'.format(carlalet.id, actor_del2Store))
+            # logging.info('#{}:需要更新的ontology记录 SET:{}.'.format(carlalet.id, actor_upd2Store))
+
             # 新建角色 ontology.actor not in store-forThisWorld, add to store.actor
             for actor_id_inworld in actor_add2Store:
                 # 重点@！ 不应该存角色 应该存角色的数据 比如transform，light，color 和typeid，
-                ontology_store_dict[actor_id_inworld] = carlalet.get_actor(actor_id_inworld)  # modify actor_store here!
-                # logging.debug('#{}:actor信息:{}.'.format(carlalet.id, ontology_store_dict[actor_id_inworld]))
-                carlalet.ontology.add(actor_id_inworld)
-                # logging.debug('ontology {} is added to store.'.format(actor_id_inworld))
+                if self.lock.acquire():
+                    if current_version == self.version:
+                        current_version += 1
+                        self.version += 1
+                        ontology_store_dict[actor_id_inworld] = carlalet.get_actor(actor_id_inworld)
+                        carlalet.ontology.add(actor_id_inworld)
+                        self.lock.release()
+                        if_break = True
+                    else:
+                        self.lock.release()
+                        if_break = False
+                        break
+            if not if_break: # version outdated, redo the operation
+                logging.info('thread{} update failed'.format(carlalet.id))
+                continue
+
+            if_break = True
             # 删除角色 store.actor-forThisWorld！ not in ontology, delete store.actor
             for actor_id_inworld in actor_del2Store:
-                ontology_store_dict.pop(actor_id_inworld)  # ^^^
-                carlalet.ontology.discard(actor_id_inworld)
                 # logging.debug('ontology {} is deleted from store.'.format(actor_id_inworld))
+                if self.lock.acquire():
+                    if current_version == self.version:
+                        current_version += 1
+                        self.version += 1
+                        ontology_store_dict.pop(actor_id_inworld)
+                        carlalet.ontology.discard(actor_id_inworld)
+                        self.lock.release()
+                        if_break = True
+                    else:
+                        self.lock.release()
+                        if_break = False
+                        break
+            if not if_break: # version outdated, redo the operation
+                logging.info('thread{} update failed'.format(carlalet.id))
+                continue
+            
+            if_break = True
             # 更新角色 update ontology.actor.transform... to store.actor.transformation
             for actor_id_inworld in actor_upd2Store:
-                new_transform = carlalet.get_actor(actor_id_inworld).get_transform()
-                ontology_store_dict[actor_id_inworld].set_transform(new_transform)  # ^^^
-                # logging.debug('ontology {} is updated to store.'.format(actor_id_inworld))
-        # logging.info('Server {} Update Store has been done.'.format(carlalet.id))
+                if self.lock.acquire():
+                    if current_version == self.version:
+                        current_version += 1
+                        self.version += 1
+                        new_transform = carlalet.get_actor(actor_id_inworld).get_transform()
+                        ontology_store_dict[actor_id_inworld].set_transform(new_transform)
+                        self.lock.release()
+                        if_break = True
+                    else:
+                        self.lock.release()
+                        if_break = False
+                        break
+            if not if_break: # version outdated, redo the operation
+                logging.info('thread{} update failed'.format(carlalet.id))
+                continue
+            else: # all operation finished, break the loop
+                logging.info('thread{} update success'.format(carlalet.id))
+                break
 
         # update carlalet from store
         # 循环遍历carlalist 对其中每一个
-        # logging.info('start to update avatar of server {}.'.format(carlalet.id))
         if carlalet.isSumo:
             self.sumo_id = carlalet.id
             logging.info('skip update avatar of sumo {}.'.format(carlalet.id))
@@ -224,11 +261,11 @@ class SimulationSynchronization(object):
                                          for id_inworld, id_onWorld in avatars_in_world if id_onWorld in avatar_destroying]
                 avatar_updating_ids = [(id_inworld, id_onWorld)
                                        for id_inworld, id_onWorld in avatars_in_world if id_onWorld in avatar_updating]
-                logging.info('#{}:原世界中的avatar SET:{}.'.format(carlalet.id, avatar_ofWorld))
-                logging.info('#{}:原记录中的avatar SET:{}.'.format(carlalet.id, avatar_ofStore))
-                logging.info('#{}:需要创建的avatar SET:{}.'.format(carlalet.id, avatar_spawning))
-                logging.info('#{}:需要销毁的avatar SET:{}.'.format(carlalet.id, avatar_destroying))
-                logging.info('#{}:需要更新的avatar SET:{}.'.format(carlalet.id, avatar_updating))
+                # logging.info('#{}:原世界中的avatar SET:{}.'.format(carlalet.id, avatar_ofWorld))
+                # logging.info('#{}:原记录中的avatar SET:{}.'.format(carlalet.id, avatar_ofStore))
+                # logging.info('#{}:需要创建的avatar SET:{}.'.format(carlalet.id, avatar_spawning))
+                # logging.info('#{}:需要销毁的avatar SET:{}.'.format(carlalet.id, avatar_destroying))
+                # logging.info('#{}:需要更新的avatar SET:{}.'.format(carlalet.id, avatar_updating))
                 # 新建角色 store[clid] - avatars[clid], spawn the avatar(actor), and add avatar
                 for actor_id_onWorld in avatar_spawning:
                     # self.actor_store[carlalet.id]
@@ -248,7 +285,6 @@ class SimulationSynchronization(object):
                     avatar_id_inWorld = carlalet.spawn_actor(blueprint, transform_onWorld)
                     if avatar_id_inWorld != INVALID_ACTOR_ID:
                         carlalet.avatars[cl.id].add((avatar_id_inWorld, actor_id_onWorld))
-                        # logging.debug('new avatar spawned. |B|')
                 # 删除角色 avatars[clid] - store[clid], delete the actor
                 for id_pair in avatar_destroying_ids:
                     id_inWorld, _ = id_pair
@@ -263,11 +299,8 @@ class SimulationSynchronization(object):
                         transform_onWorld = actor_onWorld.get_transform()
                         vehicle_light_onWorld = actor_onWorld.get_light_state() if self.sync_vehicle_lights else None
                         carlalet.synchronize_vehicle(id_inWorld, transform_onWorld, vehicle_light_onWorld)  # NET
-                        # vehicle = carlalet.get_actor(id_inWorld)
-                        # vehicle.set_transform(transform_onWorld)
-                        # if vehicle_light_onWorld is not None:
-                        #     vehicle.set_light_state(carla.VehicleLightState(vehicle_light_onWorld))
-                # logging.debug('Server {} to Server {} updated.'.format(cl.id, carlalet.id))
+        
+        carlalet.tick()
 
     def update_traffic_light(self):
         common_landmarks = None
@@ -281,8 +314,6 @@ class SimulationSynchronization(object):
 
             for landmark_id in common_landmarks:
                 cl.synchronize_traffic_light(landmark_id, states[landmark_id])
-        
-        # logging.info('traffice lights update completed.')
 
     def update_weather(self):
         weather = None
@@ -291,27 +322,6 @@ class SimulationSynchronization(object):
                 weather = cl.world.get_weather()
                 continue
             cl.world.set_weather(weather)
-
-        # logging.info('weather update completed.')
-
-    # @profile
-    def update_status(self, carlalet: CarlaSimulation):
-        # logging.debug('start to update status in carla {}.'.format(carlalet.id))
-        try:
-            if self.lock.acquire():  # it could be optimized here!
-                # logging.info('@@@@@@@@ Lock @@@@@@@@@ carla {} locked! current thread name: {}'.format(carlalet.id, threading.current_thread().name))
-                self.update_actors(carlalet)
-                logging.info('carla {} mode: {}'.format(carlalet.id, carlalet.world.get_settings().synchronous_mode))
-                self.lock.release()
-                # logging.info('######## Unlock ######## carla {} released!'.format(carlalet.id))
-            carlalet.tick()
-            # logging.debug('done! carla {} ticked.'.format(carlalet.id))
-        except KeyboardInterrupt:
-            if self.lock.locked:
-                self.lock.release()
-            logging.info('Cancelled by user.')
-        # finally:
-        #     logging.info('Cleaning threading: {}'.format(threading.current_thread().name))
 
     def update_environment(self):
         if self.sync_traffic_lights:
@@ -323,22 +333,22 @@ class SimulationSynchronization(object):
         """
         Tick to simulation synchronization
         """
+        logging.info('TICK START')
         for carlalet in self.carla_list:
-            # sync actors ( Todo consider vehicle lights and color)
-            t = threading.Thread(target=self.update_status, args=(carlalet,))
-            # logging.debug('thread has been created for carla {}.'.format(carlalet.id))
+            # sync actors
+            t = threading.Thread(target=self.update_actors, args=(carlalet,))
             self.thread_list.append(t)
 
         t = threading.Thread(target=self.update_environment)
         self.thread_list.append(t)
 
         for t in self.thread_list:
-            # logging.info('thread {} start.'.format(t))
+            logging.info('thread {} start.'.format(t))
             t.start()
         for t in self.thread_list:
             t.join()
         self.thread_list.clear()
-        # logging.debug('tick for threads finished.')
+        logging.info('TICK END')
 
     def close(self):
         """
@@ -374,9 +384,12 @@ def synchronization_loop():
 
     # 尝试连接
     carla_list = []
-    # ##先只尝试2～3个服务器，则对内存负担不高。优化可增加缓存
-    sumo_host, sumo_port = conf.get_sumo() #get sumo info
-    print(f'{sumo_host},{sumo_port}')
+    sumo_info = conf.get_sumo() # get sumo info
+    if sumo_info is not None:
+        sumo_host, sumo_port = sumo_info[0], sumo_info[1]
+    else:
+        sumo_host, sumo_port = None, None
+        
     for server_id in servers_list:
         host, port = servers_address[server_id]
         # logging.debug('start to connect Carla {}:{}'.format(host, port))
@@ -414,7 +427,6 @@ def synchronization_loop():
 
             if elapsed < step_length:
                 time.sleep(step_length - elapsed)
-            # logging.info('ticked.')
 
         # for i in range(30):
         #     start = time.time()
