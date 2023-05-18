@@ -364,8 +364,6 @@ class SimulationSynchronization(object):
 
             # Closing sumo and carla client.
             carlalet.close()
-            logging.debug('carla {} closed.'.format(carlalet.id))
-
 
 def synchronization_loop():
     """
@@ -379,7 +377,6 @@ def synchronization_loop():
     conf.load_configure()
     servers_list = conf.get_servers_id()
     servers_address = conf.get_servers_IP()
-    print(servers_address)
     step_length = conf.get_step_length()
 
     # 尝试连接
