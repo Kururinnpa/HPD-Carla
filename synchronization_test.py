@@ -373,8 +373,6 @@ class SimulationSynchronization(object):
             for t in self.thread_list:
                 logging.info('thread {} start.'.format(t))
                 t.start()
-            # for t in self.thread_list:
-            #     t.join()
 
         except KeyboardInterrupt:
             print('System ended by user')
