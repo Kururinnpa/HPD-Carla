@@ -19,8 +19,6 @@ import re
 import shutil
 import tempfile
 import time
-import threading
-import sched
 
 import lxml.etree as ET  # pylint: disable=wrong-import-position
 
@@ -67,8 +65,6 @@ from util.netconvert_carla import netconvert_carla
 # -- main ------------------------------------------------------------------------------------------
 # ==================================================================================================
 
-schedule = sched.scheduler(time.time, time.sleep)
-
 def write_sumocfg_xml(cfg_file, net_file, vtypes_file, viewsettings_file, additional_traci_clients=0):
     """
     Writes sumo configuration xml file.
@@ -86,30 +82,6 @@ def write_sumocfg_xml(cfg_file, net_file, vtypes_file, viewsettings_file, additi
 
     tree = ET.ElementTree(root)
     tree.write(cfg_file, pretty_print=True, encoding='UTF-8', xml_declaration=True)
-
-def tick(sync, net):
-    start = time.time()
-    sync.tick()
-    # Updates vehicle routes
-    for vehicle_id in traci.vehicle.getIDList():
-        route = traci.vehicle.getRoute(vehicle_id)
-        index = traci.vehicle.getRouteIndex(vehicle_id)
-        vclass = traci.vehicle.getVehicleClass(vehicle_id)
-        if index == (len(route) - 1):
-            current_edge = net.getEdge(route[index])
-            available_edges = list(current_edge.getAllowedOutgoing(vclass).keys())
-            if available_edges:
-                next_edge = random.choice(available_edges)
-                new_route = [current_edge.getID(), next_edge.getID()]
-                traci.vehicle.setRoute(vehicle_id, new_route)
-    end = time.time()
-    elapsed = end - start
-    print('tick use time: {}ms'.format(elapsed*1000))
-    # schedule.enter(args.step_length, 0, tick, (sync, net))
-    timer = threading.Timer(0.05, tick, args=(sync, net))
-    timer.start()
-
-
 
 def main(args):
 
@@ -204,38 +176,31 @@ def main(args):
                     'Could not found a route for %s. No vehicle will be spawned in sumo',
                     type_id)
 
-        # schedule.enter(args.step_length, 0, tick, (synchronization, sumo_net))
-        # schedule.run()
+        while True:
+            start = time.time()
+            
+            synchronization.tick()
 
-        timer = threading.Timer(0.05, tick, args=(synchronization, sumo_net))
-        timer.start()
-        
-        # while True:
-        #     tick(synchronization, sumo_net)
-            # start = time.time()
+            # Updates vehicle routes
+            for vehicle_id in traci.vehicle.getIDList():
+                route = traci.vehicle.getRoute(vehicle_id)
+                index = traci.vehicle.getRouteIndex(vehicle_id)
+                vclass = traci.vehicle.getVehicleClass(vehicle_id)
 
-            # synchronization.tick()
+                if index == (len(route) - 1):
+                    current_edge = sumo_net.getEdge(route[index])
+                    available_edges = list(current_edge.getAllowedOutgoing(vclass).keys())
+                    if available_edges:
+                        next_edge = random.choice(available_edges)
 
-            # # Updates vehicle routes
-            # for vehicle_id in traci.vehicle.getIDList():
-            #     route = traci.vehicle.getRoute(vehicle_id)
-            #     index = traci.vehicle.getRouteIndex(vehicle_id)
-            #     vclass = traci.vehicle.getVehicleClass(vehicle_id)
+                        new_route = [current_edge.getID(), next_edge.getID()]
+                        traci.vehicle.setRoute(vehicle_id, new_route)
 
-            #     if index == (len(route) - 1):
-            #         current_edge = sumo_net.getEdge(route[index])
-            #         available_edges = list(current_edge.getAllowedOutgoing(vclass).keys())
-            #         if available_edges:
-            #             next_edge = random.choice(available_edges)
-
-            #             new_route = [current_edge.getID(), next_edge.getID()]
-            #             traci.vehicle.setRoute(vehicle_id, new_route)
-
-            # end = time.time()
-            # elapsed = end - start
-            # print('tick use time: {}ms'.format(elapsed*1000))
-            # if elapsed < args.step_length:
-            #     time.sleep(args.step_length - elapsed)
+            end = time.time()
+            elapsed = end - start
+            print('tick use time: {}ms'.format(elapsed*1000))
+            if elapsed < args.step_length:
+                time.sleep(args.step_length - elapsed)
 
     except KeyboardInterrupt:
         logging.info('Cancelled by user.')

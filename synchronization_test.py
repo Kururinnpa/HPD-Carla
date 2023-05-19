@@ -61,7 +61,8 @@ class SimulationSynchronization(object):
         # multithread related
         self.version = 0
         self.lock = threading.Lock()
-        self.thread_list = []
+        self.thread_list = [] # list of threads
+        self.thread_dict = {} # dict of the info of threads, used to restart threads
 
         # id list
         self.actor_store = {}  # 结构是carla_id : {actor_id:actor,,,}
@@ -142,6 +143,7 @@ class SimulationSynchronization(object):
         """
         try:
             while True:
+                print(f'**********current number of threads:{len(threading.enumerate())}**********')
                 carlalet.update_info()
                 # update store from carlalet
                 while True: # the loop to update ontologies
@@ -169,12 +171,12 @@ class SimulationSynchronization(object):
                         actor_upd2Store = carlalet.ontology & ontology_ofStore
                         self.lock.release()
 
-                    logging.info('#{}:当前世界的actor SET:{}.'.format(carlalet.id, actors_ofWorld))
-                    logging.info('#{}:当前世界的ontology SET:{}.'.format(carlalet.id, carlalet.ontology))
-                    logging.info('#{}:原记录中的ontology SET:{}.'.format(carlalet.id, ontology_ofStore))
-                    logging.info('#{}:需要增加的ontology记录 SET:{}.'.format(carlalet.id, actor_add2Store))
-                    logging.info('#{}:需要删除的ontology记录 SET:{}.'.format(carlalet.id, actor_del2Store))
-                    logging.info('#{}:需要更新的ontology记录 SET:{}.'.format(carlalet.id, actor_upd2Store))
+                    # logging.info('#{}:当前世界的actor SET:{}.'.format(carlalet.id, actors_ofWorld))
+                    # logging.info('#{}:当前世界的ontology SET:{}.'.format(carlalet.id, carlalet.ontology))
+                    # logging.info('#{}:原记录中的ontology SET:{}.'.format(carlalet.id, ontology_ofStore))
+                    # logging.info('#{}:需要增加的ontology记录 SET:{}.'.format(carlalet.id, actor_add2Store))
+                    # logging.info('#{}:需要删除的ontology记录 SET:{}.'.format(carlalet.id, actor_del2Store))
+                    # logging.info('#{}:需要更新的ontology记录 SET:{}.'.format(carlalet.id, actor_upd2Store))
 
                     # 新建角色 ontology.actor not in store-forThisWorld, add to store.actor
                     for actor_id_inworld in actor_add2Store:
@@ -261,11 +263,11 @@ class SimulationSynchronization(object):
                         avatar_updating_ids = [(id_inworld, id_onWorld)
                                             for id_inworld, id_onWorld in avatars_in_world if id_onWorld in avatar_updating]
                         
-                        logging.info('#{}:原世界中的avatar SET:{}.'.format(carlalet.id, avatar_ofWorld))
-                        logging.info('#{}:原记录中的avatar SET:{}.'.format(carlalet.id, avatar_ofStore))
-                        logging.info('#{}:需要创建的avatar SET:{}.'.format(carlalet.id, avatar_spawning))
-                        logging.info('#{}:需要销毁的avatar SET:{}.'.format(carlalet.id, avatar_destroying))
-                        logging.info('#{}:需要更新的avatar SET:{}.'.format(carlalet.id, avatar_updating))
+                        # logging.info('#{}:原世界中的avatar SET:{}.'.format(carlalet.id, avatar_ofWorld))
+                        # logging.info('#{}:原记录中的avatar SET:{}.'.format(carlalet.id, avatar_ofStore))
+                        # logging.info('#{}:需要创建的avatar SET:{}.'.format(carlalet.id, avatar_spawning))
+                        # logging.info('#{}:需要销毁的avatar SET:{}.'.format(carlalet.id, avatar_destroying))
+                        # logging.info('#{}:需要更新的avatar SET:{}.'.format(carlalet.id, avatar_updating))
 
                         # 新建角色 store[clid] - avatars[clid], spawn the avatar(actor), and add avatar
                         for actor_id_onWorld in avatar_spawning:
@@ -302,7 +304,6 @@ class SimulationSynchronization(object):
                                 carlalet.synchronize_vehicle(id_inWorld, transform_onWorld, vehicle_light_onWorld)  # NET
         except KeyboardInterrupt:
             print('thread update_actor ends')
-            return
 
     def update_traffic_light(self):
         common_landmarks = None
@@ -340,39 +341,53 @@ class SimulationSynchronization(object):
         """
         Tick to simulation synchronization
         """
-        # while True:
-        try:
-            logging.info('TICK START')
-            for carlalet in self.carla_list:
-                print('******thread{} tick******'.format(carlalet.id))
-                carlalet.tick()
-            logging.info('TICK END')
-            t = threading.Timer(0.05, self.tick)
-            t.start()
-        except KeyboardInterrupt:
-            print('thread tick ends')
-            return
+        print(f'**********current number of threads:{len(threading.enumerate())}**********')
+        logging.info('TICK START')
+        for carlalet in self.carla_list:
+            # print('******thread{} tick******'.format(carlalet.id))
+            carlalet.tick()
+        logging.info('TICK END')
+        t = threading.Timer(0.05, self.tick)
+        t.start()
 
     def work(self):
         """
         the main funtion of server
         create client threads(update) and a server thread(tick)
         """
+        t_tick = threading.Timer(0.05, self.tick)
+        t_tick.start()
+            # self.thread_list.append(t_tick)
+            # self.thread_dict[t_tick.__dict__['_name']] = t_tick.__dict__['_args']
+
+        for carlalet in self.carla_list:
+            # sync actors
+            t = threading.Thread(target=self.update_actors, args=(carlalet,), daemon=True)
+            self.thread_list.append(t)
+            self.thread_dict[t.__dict__['_name']] = t.__dict__['_args']
+
+        t_env = threading.Thread(target=self.update_environment, daemon=True)
+        self.thread_list.append(t_env)
+        self.thread_dict[t_env.__dict__['_name']] = t_env.__dict__['_args']
+
+        for t in self.thread_list:
+            logging.info('thread {} start.'.format(t))
+            t.start()
+        # for t in self.thread_list:
+        #     t.join()
+
+        # when a thread is shut down, restart it
         try:
-            t_tick = threading.Timer(0.05, self.tick)
-            self.thread_list.append(t_tick)
-
-            for carlalet in self.carla_list:
-                # sync actors
-                t = threading.Thread(target=self.update_actors, args=(carlalet,), daemon=True)
-                self.thread_list.append(t)
-
-            t_env = threading.Thread(target=self.update_environment, daemon=True)
-            self.thread_list.append(t_env)
-
-            for t in self.thread_list:
-                logging.info('thread {} start.'.format(t))
-                t.start()
+            while True:
+                for t in self.thread_list:
+                    if not t.is_alive():
+                        self.thread_list.remove(t)
+                        result = self.thread_dict.pop(t.name)
+                        t_new = threading.Thread(target=self.update_actors, args=result)
+                        self.thread_list.append(t_new)
+                        self.thread_dict[t_new.__dict__['_name']] = t_new.__dict__['_args']
+                        t_new.start()
+                        print(f'*************************new thread: {t_new}********************************')
 
         except KeyboardInterrupt:
             print('System ended by user')
