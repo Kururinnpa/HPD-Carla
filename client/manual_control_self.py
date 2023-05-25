@@ -662,8 +662,10 @@ class HUD(object):
         self._show_info = True
         self._info_text = []
         self._server_clock = pygame.time.Clock()
-        # filename = './fps_data/fps'+str(random.randint(0, 65536))+'.txt'
-        # self.f = open(filename,'w')
+
+        self.tick_num = 0
+        filename = './fps_data/fps'+str(random.randint(0, 65536))+'.txt'
+        self.f = open(filename,'w')
 
     def on_world_tick(self, timestamp):
         self._server_clock.tick()
@@ -688,9 +690,14 @@ class HUD(object):
         max_col = max(1.0, max(collision))
         collision = [x / max_col for x in collision]
         vehicles = world.world.get_actors().filter('vehicle.*')
-        # s_fps, c_fps = self.server_fps,clock.get_fps()
-        # line_fps = str(s_fps)+', '+str(c_fps)+'\n'
-        # self.f.write(line_fps)
+
+        if self.tick_num < 10000:
+            s_fps, c_fps = self.server_fps,clock.get_fps()
+            line_fps = str(s_fps)+', '+str(c_fps)+'\n'
+            self.f.write(line_fps)
+
+        self.tick_num += 1
+
         self._info_text = [
             'Server:  % 16.0f FPS' % self.server_fps,
             'Client:  % 16.0f FPS' % clock.get_fps(),

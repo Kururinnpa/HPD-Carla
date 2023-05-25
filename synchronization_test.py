@@ -348,6 +348,7 @@ class SimulationSynchronization(object):
             carlalet.tick()
         logging.info('TICK END')
         t = threading.Timer(0.05, self.tick)
+        t.daemon = True
         t.start()
 
     def work(self):
@@ -356,19 +357,21 @@ class SimulationSynchronization(object):
         create client threads(update) and a server thread(tick)
         """
         t_tick = threading.Timer(0.05, self.tick)
+        t_tick.daemon = True
         t_tick.start()
             # self.thread_list.append(t_tick)
             # self.thread_dict[t_tick.__dict__['_name']] = t_tick.__dict__['_args']
+
+        t_env = threading.Thread(target=self.update_environment, daemon=True)
+        t_env.start()
+        # self.thread_list.append(t_env)
+        # self.thread_dict[t_env.__dict__['_name']] = t_env.__dict__['_args']
 
         for carlalet in self.carla_list:
             # sync actors
             t = threading.Thread(target=self.update_actors, args=(carlalet,), daemon=True)
             self.thread_list.append(t)
             self.thread_dict[t.__dict__['_name']] = t.__dict__['_args']
-
-        t_env = threading.Thread(target=self.update_environment, daemon=True)
-        self.thread_list.append(t_env)
-        self.thread_dict[t_env.__dict__['_name']] = t_env.__dict__['_args']
 
         for t in self.thread_list:
             logging.info('thread {} start.'.format(t))
