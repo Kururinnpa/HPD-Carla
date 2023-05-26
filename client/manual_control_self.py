@@ -691,9 +691,9 @@ class HUD(object):
         collision = [x / max_col for x in collision]
         vehicles = world.world.get_actors().filter('vehicle.*')
 
-        if self.tick_num < 10000:
+        if self.tick_num < 12000:
             s_fps, c_fps = self.server_fps,clock.get_fps()
-            line_fps = str(s_fps)+', '+str(c_fps)+'\n'
+            line_fps = str(s_fps)+' '+str(c_fps)+'\n'
             self.f.write(line_fps)
 
         self.tick_num += 1
